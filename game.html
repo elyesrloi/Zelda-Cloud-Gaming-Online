@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Les Fragments de Valmor</title>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<style>
+:root{--ink:#2a1d12;--parch:#f3e6c8;--gold:#e9b44c;--ember:#c8383a}
+html,body{height:100%;margin:0;overflow:hidden;background:#0d141b;color:var(--parch);font-family:'Crimson Text',Georgia,serif;touch-action:none;overscroll-behavior:none}
+[hidden]{display:none!important}
+#gl{position:fixed;inset:0;width:100%;height:100%;display:block}
+.vignette{position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse at center,transparent 55%,rgba(8,10,14,.6) 100%)}
+#title{position:fixed;inset:0;display:flex;flex-direction:column;justify-content:center;padding:0 8vw;background:linear-gradient(90deg,rgba(10,14,20,.78),rgba(10,14,20,0) 62%)}
+h1{font-family:'Cinzel',Georgia,serif;font-weight:600;font-size:clamp(34px,6vw,74px);line-height:1.05;margin:0 0 14px;color:var(--gold);text-shadow:0 2px 20px rgba(0,0,0,.6)}
+.lead{max-width:32ch;font-size:clamp(18px,2vw,22px);line-height:1.5;margin:0 0 30px}
+button{font-family:'Cinzel',Georgia,serif;font-size:17px;padding:13px 28px;border:0;border-radius:4px;background:linear-gradient(#f0c35e,#b98229);color:var(--ink);cursor:pointer;width:fit-content;box-shadow:0 6px 18px rgba(0,0,0,.4)}
+button:focus-visible{outline:2px solid #fff;outline-offset:3px}
+#hud{position:fixed;inset:0;pointer-events:none}
+#hearts{position:absolute;top:calc(14px + env(safe-area-inset-top,0px));left:16px;font-size:26px;letter-spacing:4px;text-shadow:0 2px 6px rgba(0,0,0,.6)}
+#hearts span{color:#4a3a3a}
+#hearts span.on{color:var(--ember)}
+#frag{position:absolute;top:calc(16px + env(safe-area-inset-top,0px));right:16px;font-size:18px;text-shadow:0 2px 6px rgba(0,0,0,.6)}
+#mm{position:absolute;top:50px;right:16px;width:150px;height:150px;border-radius:50%;box-shadow:0 4px 16px rgba(0,0,0,.5)}
+#toast{position:absolute;top:18%;left:50%;transform:translateX(-50%);padding:10px 18px;background:rgba(20,22,26,.65);border-radius:4px;font-size:19px;white-space:nowrap;opacity:0;transition:opacity .4s}
+#toast.show{opacity:1}
+#keys{position:absolute;left:16px;bottom:calc(12px + env(safe-area-inset-bottom,0px));font-size:15px;opacity:.85;text-shadow:0 1px 4px #000}
+#touch{position:absolute;right:16px;bottom:calc(18px + env(safe-area-inset-bottom,0px));display:none;flex-direction:column;gap:12px;align-items:flex-end;pointer-events:auto}
+#touch button{min-width:66px;min-height:66px;padding:0;border-radius:50%;font-size:15px}
+@media (pointer:coarse){#keys{display:none}#touch{display:flex}}
+#story{position:fixed;left:50%;bottom:calc(26px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);width:min(680px,92vw);background:var(--parch);color:var(--ink);padding:22px 26px;border-radius:6px;box-shadow:0 12px 40px rgba(0,0,0,.45)}
+#line{font-size:21px;line-height:1.5;margin:0 0 16px}
+</style>
+</head>
+<body>
+<div class="vignette"></div>
+<section id="title">
+  <h1>Les Fragments de Valmor</h1>
+  <p class="lead">Un royaume brisé, un monde ouvert à parcourir et trois fragments à retrouver avant que l’ombre ne couvre le château.</p>
+  <button id="start">Commencer l’aventure</button>
+</section>
+<div id="hud" hidden>
+  <div id="hearts"></div>
+  <div id="frag"></div>
+  <canvas id="mm" width="300" height="300"></canvas>
+  <div id="toast"></div>
+  <div id="keys">ZQSD ou WASD : marcher · Maj : courir · Espace : sauter · Clic ou J : épée · Flèches : regarder</div>
+  <div id="touch"><button id="bAtk">Épée</button><button id="bJump">Saut</button></div>
+</div>
+<div id="story" hidden><p id="line"></p><button id="next">Suivant</button></div>
+<script>
+const $ = s => document.querySelector(s);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+/* ---------- Rendu ---------- */
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+const cvs = renderer.domElement;
+cvs.id = 'gl';
+document.body.prepend(cvs);
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0xc9dded, 170, 1400);
+const camera = new THREE.PerspectiveCamera(58, innerWidth / innerHeight, 0.1, 2500);
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+/* ---------- Relief ---------- */
+let seed = 1337;
+const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+const hash = (x, y) => { const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return s - Math.floor(s); };
+const vnoise = (x, y) => {
+  const xi = Math.floor(x), yi = Math.floor(y), u = x - xi, v = y - yi;
+  const sx = u * u * (3 - 2 * u), sy = v * v * (3 - 2 * v);
+  const a = hash(xi, yi), b = hash(xi + 1, yi), c = hash(xi, yi + 1), d = hash(xi + 1, yi + 1);
+  return a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy;
+};
+const fbm = (x, y) => { let s = 0, a = 0.5; for (let i = 0; i < 5; i++) { s += a * vnoise(x, y); x *= 2.03; y *= 2.03; a *= 0.5; } return s; };
+const ground = (x, z) => {
+  const h0 = (fbm(x * 0.006, z * 0.006) * 50 - 9) * clamp((Math.hypot(x, z) - 28) / 80, 0, 1);
+  const p = clamp((120 - Math.hypot(x, z + 560)) / 60, 0, 1); // plateau du château
+  return h0 + (50 - h0) * p;
+};
+
+/* ---------- Terrain ---------- */
+const tg = new THREE.PlaneGeometry(1200, 1200, 240, 240).rotateX(-Math.PI / 2);
+const tp = tg.attributes.position, tc = new Float32Array(tp.count * 3), tcol = new THREE.Color();
+const cG1 = new THREE.Color(0x4f6e2b), cG2 = new THREE.Color(0x93ad55), cDirt = new THREE.Color(0x8c6c44), cRock = new THREE.Color(0x7b7466);
+for (let i = 0; i < tp.count; i++) {
+  const x = tp.getX(i), z = tp.getZ(i), y = ground(x, z);
+  tp.setY(i, y);
+  tcol.copy(cG1).lerp(cG2, fbm(x * 0.02 + 50, z * 0.02 + 50));
+  tcol.lerp(cDirt, clamp((vnoise(x * 0.05, z * 0.05) - 0.6) * 4, 0, 0.7));
+  tcol.lerp(cRock, clamp((y - 24) / 10, 0, 1));
+  tc.set([tcol.r, tcol.g, tcol.b], i * 3);
+}
+tg.setAttribute('color', new THREE.BufferAttribute(tc, 3));
+tg.computeVertexNormals();
+const terrain = new THREE.Mesh(tg, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.96 }));
+terrain.receiveShadow = true;
+scene.add(terrain);
+
+/* ---------- Herbe, arbres, rochers (instanciés) ---------- */
+const m4 = new THREE.Matrix4(), qt = new THREE.Quaternion(), eu = new THREE.Euler(), vp = new THREE.Vector3(), vs = new THREE.Vector3(), col = new THREE.Color();
+const place = (mesh, i, x, y, z, sx, sy, sz, rx = 0, ry = 0, rz = 0) => {
+  eu.set(rx, ry, rz); qt.setFromEuler(eu); vp.set(x, y, z); vs.set(sx, sy, sz);
+  m4.compose(vp, qt, vs); mesh.setMatrixAt(i, m4);
+};
+const NG = 9000;
+const grass = new THREE.InstancedMesh(new THREE.ConeGeometry(0.1, 0.9, 3).translate(0, 0.45, 0), new THREE.MeshStandardMaterial({ roughness: 1 }), NG);
+for (let i = 0; i < NG; i++) {
+  const a = rnd() * 6.283, r = 3 + 520 * Math.sqrt(rnd()), x = Math.cos(a) * r, z = Math.sin(a) * r, s = 0.6 + rnd() * 0.9;
+  place(grass, i, x, ground(x, z), z, s, s * (0.7 + rnd() * 0.6), s, rnd() * 0.3, rnd() * 6.28, rnd() * 0.3);
+  grass.setColorAt(i, col.setHSL(0.22 + rnd() * 0.06, 0.5, 0.2 + rnd() * 0.12));
+}
+scene.add(grass);
+const NT = 300;
+const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.3, 0.5, 6, 7).translate(0, 3, 0), new THREE.MeshStandardMaterial({ color: 0x5b4330, roughness: 1 }), NT);
+const leaves = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(2.4, 2).translate(0, 7.2, 0), new THREE.MeshStandardMaterial({ roughness: 0.85 }), NT);
+const trees = [];
+for (let i = 0; i < NT; i++) {
+  const big = i === 0, a = rnd() * 6.283, r = 22 + 520 * Math.sqrt(rnd());
+  const x = big ? -6 : Math.cos(a) * r, z = big ? -7 : Math.sin(a) * r, s = big ? 2.8 : 0.8 + rnd() * 0.8, y = ground(x, z);
+  place(trunks, i, x, y, z, s, s, s);
+  place(leaves, i, x, y, z, s, s * (0.9 + rnd() * 0.25), s);
+  leaves.setColorAt(i, col.setHSL(0.24 + rnd() * 0.08, 0.5, 0.18 + rnd() * 0.12));
+  trees.push({ x, z, r: 0.5 * s });
+}
+trunks.castShadow = leaves.castShadow = trunks.receiveShadow = leaves.receiveShadow = true;
+scene.add(trunks, leaves);
+const rocks = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), new THREE.MeshStandardMaterial({ color: 0x8e887c, roughness: 1, flatShading: true }), 80);
+for (let i = 0; i < 80; i++) {
+  const a = rnd() * 6.283, r = 12 + 540 * Math.sqrt(rnd()), x = Math.cos(a) * r, z = Math.sin(a) * r, s = 0.4 + rnd() * 1.8;
+  place(rocks, i, x, ground(x, z) + s * 0.25, z, s * 1.2, s * 0.8, s, rnd() * 3, rnd() * 3, rnd() * 3);
+}
+rocks.castShadow = rocks.receiveShadow = true;
+scene.add(rocks);
+
+/* ---------- Château au loin, montagnes, ciel, lumière ---------- */
+const stone = new THREE.MeshStandardMaterial({ color: 0xc9bca2, roughness: 0.95 });
+const roofMat = new THREE.MeshStandardMaterial({ color: 0x2c4a7c, roughness: 0.6 });
+const castle = new THREE.Group();
+const put = (geo, m, x, y, z) => { const o = new THREE.Mesh(geo, m); o.position.set(x, y, z); o.castShadow = true; castle.add(o); };
+put(new THREE.CylinderGeometry(42, 46, 30, 28), stone, 0, 15, 0);
+put(new THREE.CylinderGeometry(15, 17, 64, 22), stone, 0, 46, 0);
+put(new THREE.ConeGeometry(19, 34, 22), roofMat, 0, 97, 0);
+for (let i = 0; i < 6; i++) {
+  const a = i / 6 * 6.283, x = Math.cos(a) * 40, z = Math.sin(a) * 40;
+  put(new THREE.CylinderGeometry(6, 7, 42, 14), stone, x, 27, z);
+  put(new THREE.ConeGeometry(8, 16, 14), roofMat, x, 56, z);
+}
+castle.position.set(0, 50, -560);
+scene.add(castle);
+const mtn = new THREE.MeshStandardMaterial({ color: 0x6d88a4, roughness: 1, flatShading: true });
+for (let i = 0; i < 26; i++) {
+  const a = i / 26 * 6.283 + rnd() * 0.15, d = 1080 + rnd() * 160, h = 240 + rnd() * 280;
+  const m = new THREE.Mesh(new THREE.ConeGeometry(170 + rnd() * 130, h, 7), mtn);
+  m.position.set(Math.cos(a) * d, h / 2 - 90, Math.sin(a) * d);
+  scene.add(m);
+}
+const sky = new THREE.Mesh(new THREE.SphereGeometry(1900, 32, 16), new THREE.ShaderMaterial({
+  side: THREE.BackSide, depthWrite: false,
+  vertexShader: 'varying vec3 vp; void main(){ vp = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: 'varying vec3 vp; void main(){ float h = clamp(normalize(vp).y * 1.8, 0.0, 1.0); gl_FragColor = vec4(mix(vec3(0.79,0.87,0.93), vec3(0.2,0.45,0.85), pow(h, 0.55)), 1.0); }'
+}));
+scene.add(sky);
+scene.add(new THREE.HemisphereLight(0xcfe8ff, 0x4b5a2c, 0.85));
+const sun = new THREE.DirectionalLight(0xffe2b0, 2.3);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -80, right: 80, top: 80, bottom: -80, near: 1, far: 700 });
+sun.shadow.camera.updateProjectionMatrix();
+sun.shadow.bias = -0.0005;
+scene.add(sun, sun.target);
+
+/* ---------- Héros original ---------- */
+const mat = (c, r = 0.8, m = 0) => new THREE.MeshStandardMaterial({ color: c, roughness: r, metalness: m });
+const MT = { cloak: mat(0x2c3f63), pants: mat(0x3d3a44), skin: mat(0xd9a784, 0.6), hair: mat(0xe6e2da, 0.5), scarf: mat(0xa3262c, 0.7), boot: mat(0x3a2818, 0.9), steel: mat(0xd5dbe3, 0.25, 0.9), gold: mat(0xc9a13b, 0.35, 0.8), leather: mat(0x6e4a2c, 0.8), shield: mat(0x8e2b2f, 0.6), eye: mat(0x15110d, 0.3) };
+function makeHero() {
+  const root = new THREE.Group(), body = new THREE.Group();
+  root.add(body);
+  const add = (geo, m, x, y, z, parent = body) => { const o = new THREE.Mesh(geo, m); o.position.set(x, y, z); o.castShadow = true; parent.add(o); return o; };
+  const limb = (x, y, parent = body) => { const g = new THREE.Group(); g.position.set(x, y, 0); parent.add(g); return g; };
+  add(new THREE.CylinderGeometry(0.34, 0.26, 0.9, 14), MT.cloak, 0, 1.45, 0);
+  add(new THREE.BoxGeometry(0.66, 1.15, 0.05), MT.cloak, 0, 1.2, -0.28);
+  add(new THREE.CylinderGeometry(0.27, 0.27, 0.16, 14), MT.leather, 0, 0.98, 0);
+  add(new THREE.BoxGeometry(0.1, 0.1, 0.05), MT.gold, 0, 0.98, 0.27);
+  add(new THREE.TorusGeometry(0.2, 0.06, 10, 22), MT.scarf, 0, 1.9, 0).rotation.x = Math.PI / 2;
+  const head = limb(0, 2.15);
+  add(new THREE.SphereGeometry(0.23, 22, 16), MT.skin, 0, 0, 0, head);
+  add(new THREE.SphereGeometry(0.27, 22, 14, 0, 6.283, 0, 1.6), MT.hair, 0, 0.03, -0.02, head);
+  add(new THREE.BoxGeometry(0.42, 0.1, 0.14), MT.hair, 0, 0.17, 0.12, head);
+  add(new THREE.SphereGeometry(0.06, 10, 8), MT.skin, -0.23, 0, 0, head);
+  add(new THREE.SphereGeometry(0.06, 10, 8), MT.skin, 0.23, 0, 0, head);
+  add(new THREE.SphereGeometry(0.032, 8, 6), MT.eye, -0.09, 0.02, 0.2, head);
+  add(new THREE.SphereGeometry(0.032, 8, 6), MT.eye, 0.09, 0.02, 0.2, head);
+  const armL = limb(-0.42, 1.75), armR = limb(0.42, 1.75), legL = limb(-0.16, 0.95), legR = limb(0.16, 0.95);
+  for (const a of [armL, armR]) { add(new THREE.CylinderGeometry(0.08, 0.07, 0.75, 10), MT.cloak, 0, -0.38, 0, a); add(new THREE.SphereGeometry(0.09, 10, 8), MT.skin, 0, -0.8, 0, a); }
+  for (const l of [legL, legR]) { add(new THREE.CylinderGeometry(0.12, 0.1, 0.62, 10), MT.pants, 0, -0.31, 0, l); add(new THREE.BoxGeometry(0.22, 0.42, 0.28), MT.boot, 0, -0.7, 0.03, l); }
+  add(new THREE.CylinderGeometry(0.36, 0.36, 0.05, 22), MT.shield, -0.12, -0.45, 0.16, armL).rotation.x = Math.PI / 2;
+  add(new THREE.TorusGeometry(0.36, 0.035, 8, 26), MT.gold, -0.12, -0.45, 0.16, armL);
+  const sword = limb(0, -0.8, armR);
+  add(new THREE.CylinderGeometry(0.035, 0.035, 0.2, 8), MT.leather, 0, 0.08, 0, sword);
+  add(new THREE.BoxGeometry(0.3, 0.06, 0.07), MT.gold, 0, 0, 0, sword);
+  add(new THREE.BoxGeometry(0.07, 1.0, 0.02), MT.steel, 0, -0.55, 0, sword);
+  armL.rotation.z = -0.12; armR.rotation.z = 0.12;
+  return { root, body, armL, armR, legL, legR };
+}
+const hero = makeHero();
+scene.add(hero.root);
+function animateHero(h, t, mv, sp, air, ap) {
+  const sw = mv && !air ? Math.sin(t * 9) * 0.7 * sp : 0;
+  h.legL.rotation.x = air ? 0.45 : sw;
+  h.legR.rotation.x = air ? -0.25 : -sw;
+  h.armL.rotation.x = air ? -0.9 : -sw * 0.8;
+  h.armR.rotation.x = ap >= 0 ? 1.6 - 3.2 * ap : air ? -0.5 : sw * 0.6;
+  h.body.position.y = Math.sin(t * 2) * 0.012;
+}
+
+/* ---------- Sentinelles de pierre ---------- */
+function makeSentinel() {
+  const g = new THREE.Group(), b = new THREE.Mesh(new THREE.DodecahedronGeometry(0.8, 0), mat(0x6e6a62, 1));
+  b.position.y = 0.95; b.scale.set(1, 1.2, 0.9); b.castShadow = true; g.add(b);
+  const eye = new THREE.MeshBasicMaterial({ color: 0xffb040 });
+  for (const x of [-0.25, 0.25]) { const e = new THREE.Mesh(new THREE.SphereGeometry(0.1, 10, 8), eye); e.position.set(x, 1.2, 0.65); g.add(e); }
+  return g;
+}
+const enemies = [];
+for (let i = 0; i < 10; i++) {
+  const a = rnd() * 6.283, r = 60 + 260 * rnd(), x = Math.cos(a) * r, z = Math.sin(a) * r;
+  const g = makeSentinel(); g.position.set(x, ground(x, z), z); scene.add(g);
+  enemies.push({ g, hx: x, hz: z, wx: x, wz: z, hp: 2, alive: true, respawn: 0, cd: 0 });
+}
+
+/* ---------- Fragments ---------- */
+const shardMat = new THREE.MeshStandardMaterial({ color: 0xffd27a, emissive: 0xff9a2a, emissiveIntensity: 1.1, roughness: 0.2, metalness: 0.2 });
+const shards = [[210, -170], [-340, 150], [260, 300]].map(([x, z]) => {
+  const s = new THREE.Mesh(new THREE.OctahedronGeometry(0.7, 0), shardMat);
+  s.position.set(x, ground(x, z) + 2.2, z); s.castShadow = true; s.userData.got = false;
+  scene.add(s); return s;
+});
+
+/* ---------- Lumi (esprit-guide) et poussière dorée ---------- */
+const lumi = new THREE.Mesh(new THREE.SphereGeometry(0.13, 12, 10), new THREE.MeshBasicMaterial({ color: 0xc8fbff }));
+const lumiLight = new THREE.PointLight(0x9fe8ff, 1.4, 10, 2);
+scene.add(lumi, lumiLight);
+const NM = 500, mp = new Float32Array(NM * 3);
+for (let i = 0; i < NM; i++) { mp[i * 3] = rnd() * 80 - 40; mp[i * 3 + 1] = rnd() * 9; mp[i * 3 + 2] = rnd() * 80 - 40; }
+const motes = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(mp, 3)), new THREE.PointsMaterial({ color: 0xfff0c0, size: 0.1, transparent: true, opacity: 0.6, depthWrite: false }));
+scene.add(motes);
+
+/* ---------- Joueur, histoire, dialogues ---------- */
+const P = { x: -2, z: -2, y: 0, vy: 0, yaw: Math.PI, hp: 6, inv: 0, atk: 0, hit: false, onG: true, frag: 0, finale: false, mv: false, sp: 0 };
+P.y = ground(P.x, P.z);
+let yaw = 0, pitch = 0.22, started = false, dialogOpen = false, queue = [], onDone = null, toastT = 0;
+const intro = [
+  'Il y a mille ans, le Cristal de Valmor veillait sur les terres du royaume.',
+  'Une nuit, le seigneur Morvak l’a brisé en trois fragments et a enlevé la reine Ilaria.',
+  'Tu t’éveilles au pied d’un grand chêne, sans souvenirs. Une lumière douce tourne autour de toi : Lumi, un esprit-guide.',
+  '« Retrouve les trois fragments dispersés dans les terres, puis gagne le château de Valmor. »'
+];
+const finaleLines = [
+  'Les trois fragments se répondent dans ta main. Une lueur monte vers le château.',
+  'Morvak t’attend, et le royaume compte sur toi.'
+];
+function say(lines, done) { queue = lines.slice(); onDone = done || null; dialogOpen = true; $('#story').hidden = false; nextLine(); }
+function nextLine() {
+  if (!queue.length) { $('#story').hidden = true; dialogOpen = false; const f = onDone; onDone = null; if (f) f(); return; }
+  $('#line').textContent = queue.shift();
+  $('#next').textContent = queue.length ? 'Suivant' : 'Continuer';
+  $('#next').focus();
+}
+$('#next').onclick = nextLine;
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 3200); }
+const heartsEl = $('#hearts');
+for (let i = 0; i < 6; i++) heartsEl.appendChild(Object.assign(document.createElement('span'), { textContent: '♥' }));
+$('#start').onclick = () => {
+  $('#title').hidden = true; $('#hud').hidden = false; started = true;
+  cvs.requestPointerLock?.()?.catch?.(() => {});
+  say(intro, () => toast('Le premier fragment brille vers le nord-est.'));
+};
+
+/* ---------- Entrées (clavier, souris, tactile) ---------- */
+const keys = {}; let jumpReq = false, atkReq = false;
+addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (e.code === 'Space' && !dialogOpen) { e.preventDefault(); jumpReq = true; }
+  if (e.code === 'KeyJ' && !dialogOpen) atkReq = true;
+});
+addEventListener('keyup', e => { keys[e.code] = false; });
+cvs.addEventListener('mousedown', e => {
+  if (!started || dialogOpen || e.button !== 0) return;
+  if (!document.pointerLockElement) cvs.requestPointerLock?.()?.catch?.(() => {});
+  atkReq = true;
+});
+addEventListener('mousemove', e => {
+  if (document.pointerLockElement === cvs) { yaw -= e.movementX * 0.0022; pitch = clamp(pitch + e.movementY * 0.0016, -0.3, 0.9); }
+});
+const joy = { id: null, sx: 0, sy: 0, x: 0, y: 0 };
+let lookId = null, lx = 0, ly = 0;
+addEventListener('touchstart', e => {
+  for (const t of e.changedTouches) {
+    if (t.target.tagName === 'BUTTON') continue;
+    if (t.clientX < innerWidth / 2 && joy.id === null) { joy.id = t.identifier; joy.sx = t.clientX; joy.sy = t.clientY; }
+    else if (lookId === null) { lookId = t.identifier; lx = t.clientX; ly = t.clientY; }
+  }
+}, { passive: true });
+addEventListener('touchmove', e => {
+  for (const t of e.changedTouches) {
+    if (t.identifier === joy.id) { joy.x = clamp((t.clientX - joy.sx) / 55, -1, 1); joy.y = clamp((t.clientY - joy.sy) / 55, -1, 1); }
+    else if (t.identifier === lookId) { yaw -= (t.clientX - lx) * 0.005; pitch = clamp(pitch + (t.clientY - ly) * 0.004, -0.3, 0.9); lx = t.clientX; ly = t.clientY; }
+  }
+}, { passive: true });
+addEventListener('touchend', e => {
+  for (const t of e.changedTouches) {
+    if (t.identifier === joy.id) { joy.id = null; joy.x = 0; joy.y = 0; }
+    if (t.identifier === lookId) lookId = null;
+  }
+});
+$('#bAtk').addEventListener('touchstart', e => { e.preventDefault(); if (started && !dialogOpen) atkReq = true; }, { passive: false });
+$('#bJump').addEventListener('touchstart', e => { e.preventDefault(); if (started && !dialogOpen) jumpReq = true; }, { passive: false });
+
+/* ---------- Combat ---------- */
+function strike() {
+  const fx = Math.sin(P.yaw), fz = Math.cos(P.yaw);
+  for (const e of enemies) {
+    if (!e.alive) continue;
+    const dx = e.g.position.x - P.x, dz = e.g.position.z - P.z, d = Math.hypot(dx, dz);
+    if (d < 2.6 && dx * fx + dz * fz > 0.2 * d) {
+      e.hp--; e.g.position.x += fx * 1.4; e.g.position.z += fz * 1.4;
+      if (e.hp <= 0) { e.alive = false; e.respawn = 20; e.g.visible = false; toast('Une sentinelle s’effondre en poussière.'); }
+    }
+  }
+}
+
+/* ---------- Simulation ---------- */
+function step(dt) {
+  if (keys.ArrowLeft) yaw += 2.2 * dt;
+  if (keys.ArrowRight) yaw -= 2.2 * dt;
+  if (keys.ArrowUp) pitch = clamp(pitch - 1.2 * dt, -0.3, 0.9);
+  if (keys.ArrowDown) pitch = clamp(pitch + 1.2 * dt, -0.3, 0.9);
+  const f = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0) - joy.y;
+  const r = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0) + joy.x;
+  let mx = -Math.sin(yaw) * f + Math.cos(yaw) * r, mz = -Math.cos(yaw) * f - Math.sin(yaw) * r;
+  const ml = Math.hypot(mx, mz), mag = Math.min(1, Math.hypot(f, r));
+  P.mv = mag > 0.05; P.sp = mag;
+  if (P.mv && ml > 1e-3) {
+    mx /= ml; mz /= ml;
+    const sp = (keys.ShiftLeft || keys.ShiftRight ? 9.5 : 5.2) * mag;
+    P.x = clamp(P.x + mx * sp * dt, -590, 590); P.z = clamp(P.z + mz * sp * dt, -590, 590);
+    const d = Math.atan2(mx, mz) - P.yaw;
+    P.yaw += Math.atan2(Math.sin(d), Math.cos(d)) * Math.min(1, dt * 12);
+  }
+  for (const t of trees) {
+    const dx = P.x - t.x, dz = P.z - t.z, d2 = dx * dx + dz * dz, rr = t.r + 0.45;
+    if (d2 < rr * rr && d2 > 1e-6) { const d = Math.sqrt(d2); P.x = t.x + dx / d * rr; P.z = t.z + dz / d * rr; }
+  }
+  if (jumpReq && P.onG) { P.vy = 7.6; P.onG = false; }
+  jumpReq = false;
+  P.vy -= 24 * dt; P.y += P.vy * dt;
+  const gy = ground(P.x, P.z);
+  if (P.y <= gy && P.vy <= 0) { P.y = gy; P.vy = 0; P.onG = true; }
+  if (atkReq && P.atk <= 0) { P.atk = 0.42; P.hit = false; }
+  atkReq = false;
+  if (P.atk > 0) { P.atk -= dt; if (!P.hit && P.atk < 0.22) { P.hit = true; strike(); } }
+  P.inv -= dt;
+  for (const e of enemies) {
+    if (!e.alive) { if ((e.respawn -= dt) <= 0) { e.alive = true; e.hp = 2; e.g.visible = true; e.g.position.set(e.hx, ground(e.hx, e.hz), e.hz); } continue; }
+    const ex = e.g.position.x, ez = e.g.position.z, dx = P.x - ex, dz = P.z - ez, d = Math.hypot(dx, dz);
+    let vx = 0, vz = 0, sp = 1.4;
+    if (d < 13) { if (d > 1.6) { vx = dx / d; vz = dz / d; } sp = 3.4; e.g.rotation.y = Math.atan2(dx, dz); }
+    else {
+      if (Math.hypot(e.wx - ex, e.wz - ez) < 0.6) { e.wx = e.hx + (rnd() - 0.5) * 26; e.wz = e.hz + (rnd() - 0.5) * 26; }
+      const tx = e.wx - ex, tz = e.wz - ez, td = Math.hypot(tx, tz) || 1;
+      vx = tx / td; vz = tz / td; e.g.rotation.y = Math.atan2(vx, vz);
+    }
+    const nx = ex + vx * sp * dt, nz = ez + vz * sp * dt;
+    e.g.position.set(nx, ground(nx, nz), nz);
+    e.cd -= dt;
+    if (d < 1.7 && e.cd <= 0 && P.inv <= 0) { e.cd = 1.3; P.hp--; P.inv = 1.2; toast('Aïe ! Un coup de pierre.'); }
+  }
+  for (const s of shards) {
+    if (s.userData.got) continue;
+    s.rotation.y += dt * 1.6;
+    s.position.y = ground(s.position.x, s.position.z) + 2.2 + Math.sin(T * 2 + s.position.x) * 0.25;
+    if (Math.hypot(s.position.x - P.x, s.position.z - P.z) < 2.4) {
+      s.userData.got = true; s.visible = false; P.frag++;
+      toast(P.frag < 3 ? `Fragment ${P.frag} sur 3 retrouvé.` : 'Les trois fragments sont réunis !');
+    }
+  }
+  if (P.hp <= 0) { P.hp = 6; P.x = -2; P.z = -2; P.yaw = Math.PI; P.y = ground(-2, -2); P.vy = 0; toast('Tu reprends tes esprits au pied du grand chêne.'); }
+  if (P.frag === 3 && !P.finale && Math.hypot(P.x, P.z + 560) < 90) { P.finale = true; say(finaleLines); }
+}
+
+/* ---------- Vue, caméra, HUD ---------- */
+const mctx = $('#mm').getContext('2d');
+function drawMap() {
+  const c = mctx, R = 75, S = 0.22;
+  const X = x => R + (x - P.x) * S, Y = z => R + (z - P.z) * S;
+  const dot = (x, y, rad, color) => { c.fillStyle = color; c.beginPath(); c.arc(x, y, rad, 0, 6.283); c.fill(); };
+  c.setTransform(2, 0, 0, 2, 0, 0);
+  c.clearRect(0, 0, 150, 150);
+  c.save();
+  c.beginPath(); c.arc(R, R, R - 1, 0, 6.283); c.clip();
+  c.fillStyle = '#efe0b8'; c.fillRect(0, 0, 150, 150);
+  c.fillStyle = '#4f6b2c';
+  for (const t of trees) { const x = X(t.x), y = Y(t.z); if (x > -3 && x < 153 && y > -3 && y < 153) c.fillRect(x - 1.5, y - 1.5, 3, 3); }
+  for (const s of shards) if (!s.userData.got) dot(X(s.position.x), Y(s.position.z), 4, '#e0862a');
+  for (const e of enemies) if (e.alive) dot(X(e.g.position.x), Y(e.g.position.z), 2.5, '#8a2a1f');
+  const dx = X(0) - R, dy = Y(-560) - R, len = Math.hypot(dx, dy) || 1, k = Math.min(1, (R - 12) / len);
+  dot(R + dx * k, R + dy * k, 4.5, '#2c4a7c');
+  c.translate(R, R);
+  c.rotate(Math.atan2(Math.cos(P.yaw), Math.sin(P.yaw)));
+  c.fillStyle = '#2a1d12';
+  c.beginPath(); c.moveTo(9, 0); c.lineTo(-6, 5.5); c.lineTo(-6, -5.5); c.closePath(); c.fill();
+  c.restore();
+  c.strokeStyle = '#2a1d12'; c.lineWidth = 3;
+  c.beginPath(); c.arc(R, R, R - 1.5, 0, 6.283); c.stroke();
+}
+function view(dt) {
+  hero.root.position.set(P.x, P.y, P.z);
+  hero.root.rotation.y = P.yaw;
+  animateHero(hero, T, P.mv, P.sp, !P.onG, P.atk > 0 ? 1 - P.atk / 0.42 : -1);
+  const cp = Math.cos(pitch);
+  const want = new THREE.Vector3(P.x + Math.sin(yaw) * cp * 6.8, P.y + 1.7 + Math.sin(pitch) * 6.8, P.z + Math.cos(yaw) * cp * 6.8);
+  want.y = Math.max(want.y, ground(want.x, want.z) + 1.2);
+  camera.position.lerp(want, 1 - Math.exp(-dt * 14));
+  camera.lookAt(P.x, P.y + 1.7, P.z);
+  sun.position.set(P.x + 120, 220, P.z + 90);
+  sun.target.position.set(P.x, 0, P.z);
+  const lt = T * 1.2;
+  lumi.position.lerp(new THREE.Vector3(P.x + Math.sin(lt) * 1.6 - Math.sin(P.yaw) * 1.4, P.y + 2.2 + Math.sin(T * 2.3) * 0.2, P.z + Math.cos(lt) * 1.6 - Math.cos(P.yaw) * 1.4), 1 - Math.exp(-dt * 4));
+  lumiLight.position.copy(lumi.position);
+  const ma = motes.geometry.attributes.position.array;
+  for (let i = 0; i < ma.length; i += 3) {
+    ma[i] = P.x + ((((ma[i] - P.x) + 40) % 80) + 80) % 80 - 40;
+    ma[i + 2] = P.z + ((((ma[i + 2] - P.z) + 40) % 80) + 80) % 80 - 40;
+  }
+  motes.geometry.attributes.position.needsUpdate = true;
+  if (started) {
+    [...heartsEl.children].forEach((s, i) => s.classList.toggle('on', i < P.hp));
+    $('#frag').textContent = `Fragments ${P.frag} / 3`;
+    drawMap();
+  }
+}
+
+/* ---------- Boucle ---------- */
+let last = performance.now(), T = 0;
+function frame(now) {
+  requestAnimationFrame(frame);
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now; T += dt;
+  if (!started) yaw += dt * 0.05;
+  else if (!dialogOpen) step(dt);
+  view(dt);
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
